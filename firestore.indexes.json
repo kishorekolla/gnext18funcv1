@@ -1,0 +1,10 @@
+{
+  "indexes": [
+    {
+      "collectionId": "courses",
+      "fields": [
+        { "fieldPath": "grade", "mode": "ASCENDING" }
+      ]
+    }
+  ]
+}
