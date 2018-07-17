@@ -1,21 +1,28 @@
 'use strict';
 const functions = require('firebase-functions');
+const coursesList = require('./courses.json');
+
 const {
     dialogflow,
-    BasicCard,
+    List,
     BrowseCarousel,
     BrowseCarouselItem,
-    Button,
-    Carousel,
-    Image,
-    LinkOutSuggestion,
-    List,
-    MediaObject,
     Suggestions,
     SimpleResponse,
     UpdatePermission,
-    RegisterUpdate
+    Carousel
 } = require('actions-on-google');
+
+const {
+    WebhookClient
+} = require('dialogflow-fulfillment');
+const {
+    Card,
+    Image,
+    Text,
+    Suggestion,
+    Payload
+} = require('dialogflow-fulfillment');
 
 const util = require('util');
 const admin = require('firebase-admin');
@@ -24,19 +31,29 @@ const app = dialogflow({
     debug: true
 });
 
+app.middleware((conv) => {
+    conv.hasScreen =
+        conv.surface.capabilities.has('actions.capability.SCREEN_OUTPUT');
+    conv.hasAudioPlayback =
+        conv.surface.capabilities.has('actions.capability.AUDIO_OUTPUT');
+});
+
 admin.initializeApp(functions.config().firebase);
 const db = admin.firestore();
-
+const storage = admin.storage();
+const userName = 'Kishore';
 const FirestoreNames = {
     CATEGORY: 'category',
     CREATED_AT: 'created_at',
     INTENT: 'intent',
-    ANNOUNCEMENT: 'text',
+    ANNOUNCEMENT_TITLE: 'title',
+    ANNOUNCEMENT_TEXT: 'text',
+    ANNOUNCEMENT_ID: 'id',
     ANNOUNCEMENTS: 'announcements',
     URL: 'url',
     USERS: 'students',
     USER_ID: 'externalId',
-  };
+};
 
 const TELL_LATEST_TIP_INTENT = 'tell_latest_tip';
 
@@ -45,153 +62,190 @@ function randomChoice(arr) {
     return arr[Math.floor(arr.length * Math.random())];
 }
 app.intent('announcement.select', (conv) => {
-    conv.ask(new UpdatePermission({intent: 'announcement.getlatest'}));
-  });
-
-  app.intent('announcement.finish_push_setup', (conv) => {
-      console.log(conv.arguments.get('PERMISSION'));
-    if (conv.arguments.get('PERMISSION')) {
-      const userID = conv.arguments.get('UPDATES_USER_ID');
-      console.log("user id: "+userID);
-      // code to save intent and userID in your db
-      conv.close(`Ok, I'll start alerting you. ${userID}`);
-    } else {
-      conv.close(`Ok, I won't alert you.`);
-    }
-  });
-// Handle the Dialogflow intent named 'Default Welcome Intent'.
-app.intent('input.welcome', conv => {
-    console.log('welcome input');
-    console.log(conv);
-    conv.user.storage = {};
-    var randomText = randomChoice(default_data.WELCOME_SUGGESTIONS);
-    conv.ask(util.format(randomText, 'Kishore'));
-    conv.ask(new Suggestions(default_data.WELCOME_SUGGESTIONS));
-    //conv.ask(new UpdatePermission({intent: 'tell_latest_tip'}));
-    // conv.ask(util.format(randomText, 'Kishore'));
-    // conv.ask(new Suggestions(default_data.WELCOME_SUGGESTIONS));
-    // return new Promise(function (resolve, reject) {
-    //     getUserName(conv.user._id).then(users => {
-    //         var userName = "test"
-    //         users.forEach(item => {
-    //             userName = item.data().firstName;
-    //             console.log("user name %s", userName);
-    //         })
-    //         conv.ask(util.format(randomText, userName));
-    //         conv.ask(new Suggestions(default_data.WELCOME_SUGGESTIONS));
-    //         resolve();
-
-    //     });
-    // });
+    // conv.ask(new UpdatePermission({intent: 'announcement.getlatest'}));
+    conv.ask(new UpdatePermission({
+        intent: 'announcement.getlatest'
+    }));
 });
 
-function getUserName(id) {
-    let studentsRef = db.collection("students");
-    return studentsRef.where("externalId", "==", id).get();
-}
+app.intent('announcement.finish_push_setup', (conv) => {
+    console.log(JSON.stringify(conv.arguments));
+    if (conv.arguments.get('PERMISSION')) {
+        const userID = conv.arguments.get('UPDATES_USER_ID');
+        // code to save intent and userID in your db
+        conv.close(`Ok, I'll start alerting you.`);
+    } else {
+        conv.close(`Ok, I won't alert you.`);
+    }
+});
+// Handle the Dialogflow intent named 'Default Welcome Intent'.
+app.intent('input.welcome', conv => {
+
+    var randomText = randomChoice(default_data.WELCOME_SUGGESTIONS);
+    conv.ask(new SimpleResponse({
+        speech: util.format(randomText, userName),
+        text: util.format(randomText, userName)
+    }));
+    conv.ask(new Suggestions(default_data.WELCOME_SUGGESTIONS));
+});
 
 app.intent('input.fallback', (conv) => {
-    console.log(conv);
     conv.ask(randomChoice(default_data.GENERAL_FALLBACKS));
 });
 
-
 app.intent('course.list_all', (conv) => {
-    console.log('course function called')
-    let coursesRef = db.collection("courses");
-    console.log(JSON.stringify(conv))
-    let courses = [];
-    let list = new List({
-        title: 'Course List',
-        items: new OptionItems()
-    });   
+    console.log(JSON.stringify(coursesList));
+    var randomText = randomChoice(default_data.COURSE_SELECT);
+    let optionItems = [];
 
-    return new Promise(function (resolve, reject) {
-        coursesRef.where("grade", "==", 8).orderBy("name").get().then(snapshot => {
-                snapshot.forEach(doc => {
-                    console.log(JSON.stringify(doc.data()));
-                    var item = doc.data();
-                    var listItem = createListItem(item.id, item.name, item.description, item.imageUri);
-                    console.log(JSON.stringify(listItem));
-                    list.items.push(listItem);
-                });
-                conv.ask(list);
-                resolve();
-
+    for (let index = 0; index < coursesList.length; index++) {
+        var element = coursesList[index];
+        optionItems.push(new ListOption({
+            title: element.name,
+            synonyms: [element.name, element.descriptionHeading],
+            description: element.description,
+            image: new Image({
+                url: element.imageUri,
+                alt: element.descriptionHeading,
             })
-            .catch(err => {
-                console.error("Error occured while feteching student courses");
-                conv.ask(randomChoice(default_data.GENERAL_FALLBACKS));
-                resolve();
-            });
+        }));
+    }
+    conv.contexts.set(default_data.OUT_CONTEXT_COURSE, 5, {
+        type: default_data.OUT_CONTEXT_COURSE
+    })
+
+    conv.ask(randomText);
+
+    conv.ask(new List({
+        items: optionItems
+    }));
+
+});
+
+exports.downloadFile = functions.https.onRequest((req, res) => {
+    let filename = req.query.filename;
+    storage.bucket().file(filename).download().then(function (buffer) {
+        var extension = filename.split('.')[1];
+        res.contentType("audio/" + extension);
+        return res.send(buffer.toString());
+    }).catch(function (error) {
+        console.error("Error occured while downlading file : " + JSON.stringify(error));
+        return res.send(500, 'Sorry, error occured while downloading file');
     });
 });
 
-function createListItem(id, _title, _description, _imgUrl) {
-    return new{
-        [id]:{
-        "title": _title,
-        "description": _description,
-        "image": new Image({
-            url: _imgUrl,
-            alt: _title + ' image logo',
+
+exports.getAnnouncementById = functions.https.onRequest((req, res) => {
+    var announcementRef = db.collection(FirestoreNames.ANNOUNCEMENTS).doc(req.query.id);
+
+    announcementRef.get().then(doc => {
+            if (!doc.exists) {
+                console.log(`No announcement found for the id ${req.query.id}`);
+            } else {
+                res.json({
+                    result: doc.data()
+                });
+            }
         })
-    }};
-}
+        .catch(err => {
+            console.log(`Error getting announcement document id ${req.query.id}`, err);
+            return res.send(500, 'Sorry, error occured while feteching announcement ' + JSON.stringify(err));
+        });
+});
+
+exports.getLatestAnnouncements = functions.https.onRequest((req, res) => {
+    let lastSeen = req.query.lastSeen;
+    let grade = req.query.grade;
+    let items = [];
+
+    var announcementsQuery = db.collection(FirestoreNames.ANNOUNCEMENTS)
+        .where("grade", "==", parseInt(grade));
+    if (lastSeen != undefined && lastSeen != null && lastSeen != '')
+        announcementsQuery = announcementsQuery.where("added_at", ">", new Date(lastSeen));
+
+    announcementsQuery
+        .get()
+        .then(snapshot => {
+            snapshot.forEach(doc => {
+                var item = doc.data();
+                items.push(item);
+            });
+
+            res.json({
+                result: items
+            });
+        })
+        .catch(err => {
+            console.error("Error occured while feteching announcements: " + JSON.stringify(err));
+            return res.send(500, 'Sorry, error occured while feteching announcements ' + JSON.stringify(err));
+        });
+});
 
 exports.createAnnouncement = functions.firestore
-  .document(`${FirestoreNames.ANNOUNCEMENTS}/{id}`)
-  .onCreate((snap, context) => {
-    const request = require('request');
-    const google = require('googleapis');
-    const serviceAccount = require('./service-account.json');
-    const jwtClient = new google.auth.JWT(
-      serviceAccount.client_email, null, serviceAccount.private_key,
-      ['https://www.googleapis.com/auth/actions.fulfillment.conversation'],
-      null
-    );
-    
-    let notification = {
-      userNotification: {
-        title: snap.get(FirestoreNames.ANNOUNCEMENT),
-      },
-      target: {},
-    };
-    jwtClient.authorize((err, tokens) => {
-      if (err) {
-        throw new Error(`Auth error: ${err}`);
-      }
-      db.collection(FirestoreNames.USERS)  
-      .where("id", "==", "kishorekolla")     
-        .get()
-        .then((querySnapshot) => {
-          querySnapshot.forEach((user) => {
-            notification.target = {
-              userId: user.get(FirestoreNames.USER_ID),
-              intent: 'announcement.getlatest',
-            };
-            request.post('https://actions.googleapis.com/v2/conversations:send', {
-              'auth': {
-                'bearer': tokens.access_token,
-              },
-              'json': true,
-              'body': {'customPushMessage': notification, 'isInSandbox': true},
-            }, (err, httpResponse, body) => {
-              if (err) {
-                throw new Error(`API request error: ${err}`);
-              }
-              console.log(`${httpResponse.statusCode}: ` +
-                `${httpResponse.statusMessage}`);
-              console.log(JSON.stringify(body));
-            });
-          });
-        })
-        .catch((error) => {
-          throw new Error(`Firestore query error: ${error}`);
+    .document(`${FirestoreNames.ANNOUNCEMENTS}/{id}`)
+    .onCreate((snap, context) => {
+        const request = require('request');
+        const google = require('googleapis');
+        const serviceAccount = require('./service-account.json');
+        console.log(JSON.stringify(snap));
+        console.log(JSON.stringify(context));
+        const jwtClient = new google.auth.JWT(
+            serviceAccount.client_email, null,
+            serviceAccount.private_key, 
+            ['https://www.googleapis.com/auth/actions.fulfillment.conversation'],
+            null
+        );
+
+        let notification = {
+            userNotification: {
+                title: snap.get(FirestoreNames.ANNOUNCEMENT_TITLE),
+                text: snap.get(FirestoreNames.ANNOUNCEMENT_TEXT)
+            },
+            target: {},
+        };
+        let announcementId = snap.params.id;
+        jwtClient.authorize((err, tokens) => {
+            if (err) {
+                throw new Error(`Auth error: ${err}`);
+            }
+            db.collection(FirestoreNames.USERS)
+                .where("id", "==", "kishorekolla")
+                .get()
+                .then((querySnapshot) => {
+                    querySnapshot.forEach((user) => {
+                        notification.target = {
+                            userId: user.get(FirestoreNames.USER_ID),
+                            intent: 'announcement.get_notification',
+                            argument: {
+                                name: "id",
+                                textValue: announcementId
+                            }
+                        };
+                        console.log(`access token :  ${tokens.access_token} `);
+                        request.post('https://actions.googleapis.com/v2/conversations:send', {
+                            auth: {
+                                'bearer': tokens.access_token,
+                            },
+                            json: true,
+                            body: {
+                                'customPushMessage': notification
+                            }
+                        }, (err, httpResponse, body) => {
+                            if (err) {
+                                throw new Error(`API request error: ${err}`);
+                            }
+                            console.log(`${httpResponse.statusCode}: ` +
+                                `${httpResponse.statusMessage}`);
+                            console.log(`${body}`);
+                        });
+                    });
+                })
+                .catch((error) => {
+                    throw new Error(`Firestore query error: ${error}`);
+                });
         });
+        return 0;
     });
-    return 0;
-  });
 
 const default_data = {
     WELCOME_SUGGESTIONS: [
@@ -279,5 +333,17 @@ const default_data = {
     LESSON_ACTIVITY_DO: [
         'Do this activity now'
     ],
+    EVENT_NEXT_QUESTION: 'action_next_question',
+
+    OUT_CONTEXT_COURSE: 'course',
+    OUT_CONTEXT_ANNOUNCEMENT: 'announcement',
+    OUT_CONTEXT_HOMEWORK: 'homework',
+    OUT_CONTEXT_DO_HOMEWORK: 'homework_do',
+    OUT_CONTEXT_LESSON: 'lesson',
+    OUT_CONTEXT_LESSON_ACTIVITY: 'lesson_activity',
+    OUT_CONTEXT_LESSON_ACTIVITY_DO: 'lesson_activity_do',
+    OUT_CONTEXT_QUIZ: 'quiz',
+    OUT_CONTEXT_QUIZ_DO: 'quiz_do',
+    OUT_CONTEXT_QUIZ_QUESTION: 'quiz_question',
 };
 exports.dialogflowFirebaseFulfillment = functions.https.onRequest(app);

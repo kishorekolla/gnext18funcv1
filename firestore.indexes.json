@@ -1,10 +1,20 @@
 {
+
   "indexes": [
     {
-      "collectionId": "courses",
+      "collectionId": "students",
       "fields": [
-        { "fieldPath": "grade", "mode": "ASCENDING" }
+        { "fieldPath": "email", "mode": "ASCENDING" },
+        { "fieldPath": "id", "mode": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionId": "announcements",
+      "fields": [
+        { "fieldPath": "grade", "mode": "ASCENDING" },
+        { "fieldPath": "added_at", "mode": "ASCENDING" }
       ]
     }
   ]
+ 
 }
