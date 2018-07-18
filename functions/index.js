@@ -1,6 +1,9 @@
 'use strict';
 const functions = require('firebase-functions');
 const coursesList = require('./courses.json');
+const request = require('request');
+const google = require('googleapis');
+const serviceAccount = require('./service-account.json');
 
 const {
     dialogflow,
@@ -50,6 +53,10 @@ const FirestoreNames = {
     ANNOUNCEMENT_TEXT: 'text',
     ANNOUNCEMENT_ID: 'id',
     ANNOUNCEMENTS: 'announcements',
+    HOMEWORK_TITLE: 'title',
+    HOMEWORK_TEXT: 'text',
+    HOMEWORK_ID: 'id',
+    HOMEWORKS: 'homeworks',
     URL: 'url',
     USERS: 'students',
     USER_ID: 'externalId',
@@ -162,48 +169,42 @@ exports.getLatestAnnouncements = functions.https.onRequest((req, res) => {
         .where("grade", "==", parseInt(grade));
     if (lastSeen != undefined && lastSeen != null && lastSeen != '')
         announcementsQuery = announcementsQuery.where("added_at", ">", new Date(lastSeen));
+    return new Promise((resolve, reject) => {
+        announcementsQuery
+            .get()
+            .then(snapshot => {
+                snapshot.forEach(doc => {
+                    var item = doc.data();
+                    items.push(item);
+                });
 
-    announcementsQuery
-        .get()
-        .then(snapshot => {
-            snapshot.forEach(doc => {
-                var item = doc.data();
-                items.push(item);
+                res.json({
+                    result: items
+                });
+                resolve();
+            })
+            .catch(err => {
+                console.error("Error occured while feteching announcements: " + JSON.stringify(err));
+                return res.send(500, 'Sorry, error occured while feteching announcements ' + JSON.stringify(err));
+                reject();
             });
-
-            res.json({
-                result: items
-            });
-        })
-        .catch(err => {
-            console.error("Error occured while feteching announcements: " + JSON.stringify(err));
-            return res.send(500, 'Sorry, error occured while feteching announcements ' + JSON.stringify(err));
-        });
+    });
 });
 
-exports.createAnnouncement = functions.firestore
+exports.createAnnouncementAlert = functions.firestore
     .document(`${FirestoreNames.ANNOUNCEMENTS}/{id}`)
     .onCreate((snap, context) => {
-        const request = require('request');
-        const google = require('googleapis');
-        const serviceAccount = require('./service-account.json');
-        console.log(JSON.stringify(snap));
-        console.log(JSON.stringify(context));
         const jwtClient = new google.auth.JWT(
             serviceAccount.client_email, null,
-            serviceAccount.private_key, 
-            ['https://www.googleapis.com/auth/actions.fulfillment.conversation'],
+            serviceAccount.private_key, ['https://www.googleapis.com/auth/actions.fulfillment.conversation'],
             null
         );
-
         let notification = {
             userNotification: {
-                title: snap.get(FirestoreNames.ANNOUNCEMENT_TITLE),
-                text: snap.get(FirestoreNames.ANNOUNCEMENT_TEXT)
+                title: snap.get(FirestoreNames.ANNOUNCEMENT_TITLE)
             },
             target: {},
         };
-        let announcementId = snap.params.id;
         jwtClient.authorize((err, tokens) => {
             if (err) {
                 throw new Error(`Auth error: ${err}`);
@@ -215,10 +216,67 @@ exports.createAnnouncement = functions.firestore
                     querySnapshot.forEach((user) => {
                         notification.target = {
                             userId: user.get(FirestoreNames.USER_ID),
-                            intent: 'announcement.get_notification',
+                            intent: 'input.get_notification',
                             argument: {
-                                name: "id",
-                                textValue: announcementId
+                                name: "data",
+                                textValue: `announcement_${context.params.id}`
+                            }
+                        };
+                        console.log(`access token :  ${tokens.access_token} `);
+                        request.post('https://actions.googleapis.com/v2/conversations:send', {
+                            auth: {
+                                'bearer': tokens.access_token,
+                            },
+                            json: true,
+                            body: {
+                                'customPushMessage': notification
+                            }
+                        }, (err, httpResponse, body) => {
+                            if (err) {
+                                throw new Error(`API request error: ${err}`);
+                            }
+                            console.log(`${httpResponse.statusCode}: ` +
+                                `${httpResponse.statusMessage}`);
+                            console.log(`${body}`);
+                        });
+                    });
+                })
+                .catch((error) => {
+                    throw new Error(`Firestore query error: ${error}`);
+                });
+        });
+        return 0;
+    });
+
+exports.createHomeworkAlert = functions.firestore
+    .document(`${FirestoreNames.HOMEWORKS}/{id}`)
+    .onCreate((snap, context) => {
+        const jwtClient = new google.auth.JWT(
+            serviceAccount.client_email, null,
+            serviceAccount.private_key, ['https://www.googleapis.com/auth/actions.fulfillment.conversation'],
+            null
+        );
+        let notification = {
+            userNotification: {
+                title: snap.get(FirestoreNames.HOMEWORK_TITLE)
+            },
+            target: {},
+        };
+        jwtClient.authorize((err, tokens) => {
+            if (err) {
+                throw new Error(`Auth error: ${err}`);
+            }
+            db.collection(FirestoreNames.USERS)
+                .where("id", "==", "kishorekolla")
+                .get()
+                .then((querySnapshot) => {
+                    querySnapshot.forEach((user) => {
+                        notification.target = {
+                            userId: user.get(FirestoreNames.USER_ID),
+                            intent: 'input.get_notification',
+                            argument: {
+                                name: "data",
+                                textValue: `homework_${context.params.id}`
                             }
                         };
                         console.log(`access token :  ${tokens.access_token} `);
